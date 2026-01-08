@@ -1,36 +1,51 @@
-name: yt-digest
+name: YouTube Digest (Daily)
 
 on:
   schedule:
-    - cron: "0 14 * * *"  # daily at 14:00 UTC (adjust)
+    # 6:00 AM America/Los_Angeles
+    # 14:00 UTC (will be 7am during PDT)
+    - cron: "0 14 * * *"
+
+  # Allow manual runs from the Actions tab
   workflow_dispatch: {}
 
 jobs:
-  run:
+  run-digest:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    environment: production
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm ci
 
-      - name: Run digest
+      - name: Run YouTube digest
         env:
+          # Required secrets (from GitHub Environment: production)
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SCRAPINGDOG_API_KEY: ${{ secrets.SCRAPINGDOG_API_KEY }}
+
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
 
-          # caps + config
+          # Config (can also be secrets if you prefer)
+          FREQUENCY: "daily"
+          TIMEZONE: "America/Los_Angeles"
+
           CAP_DAILY_PER_SECTION: "20"
           CAP_WEEKLY_PER_SECTION: "50"
           MAX_VIDEOS_PER_CHANNEL: "10"
-          # add your other vars here exactly like your .env
 
         run: node index.mjs
