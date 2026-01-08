@@ -15,8 +15,43 @@ export function buildEmail({ frequency, timezone, sections }) {
     0
   );
 
-  const subjectPrefix = frequency === "weekly" ? "Weekly YouTube Digest" : "Your YouTube Digest";
+  const subjectPrefix =
+    frequency === "weekly" ? "Weekly YouTube Digest" : "Your YouTube Digest";
   const subject = `${subjectPrefix} — ${totalShown} videos`;
+
+  function formatReason(raw) {
+    const s = String(raw || "").trim();
+
+    // Empty / missing
+    if (!s) return "No transcript/captions available.";
+
+    const lower = s.toLowerCase();
+
+    // Common known cases
+    if (lower.includes("no_transcript") || lower.includes("no transcript"))
+      return "No transcript/captions available on YouTube.";
+    if (lower.includes("too_short"))
+      return "Transcript exists but is too short to summarize reliably.";
+
+    // Vendor / network / rate limiting vibes
+    if (lower.includes("scrapingdog") && lower.includes("502"))
+      return "Transcript provider temporarily unavailable (502).";
+    if (lower.includes("502") || lower.includes("bad gateway"))
+      return "Temporary upstream error (502).";
+    if (lower.includes("429") || lower.includes("rate"))
+      return "Rate-limited temporarily. Will retry next run.";
+    if (lower.includes("timeout") || lower.includes("timed out"))
+      return "Request timed out while fetching transcript.";
+    if (lower.includes("fetch failed") || lower.includes("network"))
+      return "Network error while fetching transcript.";
+
+    // If someone accidentally passed the whole HTML page / huge blob
+    if (lower.includes("<!doctype html") || lower.includes("<html"))
+      return "Transcript provider returned an unexpected response.";
+
+    // Default: keep it short, one line max
+    return s.length > 140 ? s.slice(0, 137) + "..." : s;
+  }
 
   // ---------- TEXT VERSION ----------
   let text = "";
@@ -29,7 +64,8 @@ export function buildEmail({ frequency, timezone, sections }) {
     const totalNew = section.totalNew ?? section.newCount ?? section.stats?.newCount;
     const summarizedCount = section.summarizedCount ?? section.stats?.summarized;
     const skippedCount = section.skippedCount ?? section.stats?.skipped;
-    const notShownCount = section.notShownCount ?? section.stats?.notShownCount ?? section.stats?.notShown;
+    const notShownCount =
+      section.notShownCount ?? section.stats?.notShownCount ?? section.stats?.notShown;
 
     text += `${String(label).toUpperCase()}\n`;
     if (
@@ -38,9 +74,9 @@ export function buildEmail({ frequency, timezone, sections }) {
       typeof skippedCount === "number" ||
       typeof notShownCount === "number"
     ) {
-      text += `(${totalNew ?? 0} new • ${summarizedCount ?? 0} summarized • ${skippedCount ?? 0} skipped • ${
-        notShownCount ?? 0
-      } not shown)\n\n`;
+      text += `(${totalNew ?? 0} new • ${summarizedCount ?? 0} summarized • ${
+        skippedCount ?? 0
+      } skipped • ${notShownCount ?? 0} not shown)\n\n`;
     } else {
       text += `\n`;
     }
@@ -48,7 +84,11 @@ export function buildEmail({ frequency, timezone, sections }) {
     for (const item of section.items || []) {
       const status = item.status || (item.summary ? "summarized" : "skipped");
 
-      text += status === "summarized" ? `📌 ${item.title}\n` : `⚠️ ${item.title} (Not summarized)\n`;
+      text +=
+        status === "summarized"
+          ? `📌 ${item.title}\n`
+          : `⚠️ ${item.title} (Not summarized)\n`;
+
       text += `Channel: ${item.channelName || item.channel || ""}\n`;
       text += `Watch: ${item.url}\n`;
       text += `Published: ${item.publishedAt || item.published || ""}\n`;
@@ -57,14 +97,17 @@ export function buildEmail({ frequency, timezone, sections }) {
         const one = item.summary?.one_liner || "";
         text += `\nSummary: ${one}\n`;
 
-        const pts = Array.isArray(item.summary?.key_points) ? item.summary.key_points : [];
+        const pts = Array.isArray(item.summary?.key_points)
+          ? item.summary.key_points
+          : [];
         if (pts.length) {
           text += `Key points:\n`;
           for (const p of pts) text += `• ${p}\n`;
         }
         if (item.source) text += `Source: ${item.source}\n`;
       } else {
-        text += `No summary available.\nReason: ${item.reason || "No transcript/captions available."}\n`;
+        const niceReason = formatReason(item.reason);
+        text += `No summary available.\nReason: ${niceReason}\n`;
       }
 
       text += `\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -87,21 +130,20 @@ export function buildEmail({ frequency, timezone, sections }) {
       const totalNew = section.totalNew ?? section.newCount ?? section.stats?.newCount;
       const summarizedCount = section.summarizedCount ?? section.stats?.summarized;
       const skippedCount = section.skippedCount ?? section.stats?.skipped;
-      const notShownCount = section.notShownCount ?? section.stats?.notShownCount ?? section.stats?.notShown;
+      const notShownCount =
+        section.notShownCount ?? section.stats?.notShownCount ?? section.stats?.notShown;
 
       const statsLine =
         typeof totalNew === "number" ||
         typeof summarizedCount === "number" ||
         typeof skippedCount === "number" ||
         typeof notShownCount === "number"
-          ? `${totalNew ?? 0} new • ${summarizedCount ?? 0} summarized • ${skippedCount ?? 0} skipped • ${
-              notShownCount ?? 0
-            } not shown`
+          ? `${totalNew ?? 0} new • ${summarizedCount ?? 0} summarized • ${
+              skippedCount ?? 0
+            } skipped • ${notShownCount ?? 0} not shown`
           : "";
 
-      const itemsHtml = (section.items || [])
-        .map((item) => renderCard(item))
-        .join("");
+      const itemsHtml = (section.items || []).map((item) => renderCard(item, { formatReason })).join("");
 
       return `
         <tr>
@@ -189,7 +231,9 @@ export async function sendEmail({ subject, text, html }) {
 
 /* -------------------- helpers -------------------- */
 
-function renderCard(item) {
+function renderCard(item, opts = {}) {
+  const { formatReason } = opts;
+
   const status = item.status || (item.summary ? "summarized" : "skipped");
 
   const title = escapeHtml(item.title || "");
@@ -201,7 +245,7 @@ function renderCard(item) {
   const badge =
     status === "summarized"
       ? `<span style="display:inline-block;font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;background:#E7F7EF;color:#0B6B3A;font-weight:700;">Summarized</span>`
-      : `<span style="display:inline-block;font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;background:#FFF3E6;color:#8A4B00;font-weight:700;">No transcript</span>`;
+      : `<span style="display:inline-block;font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;background:#FFF3E6;color:#8A4B00;font-weight:700;">Not summarized</span>`;
 
   const oneLiner =
     status === "summarized"
@@ -223,13 +267,16 @@ function renderCard(item) {
       `
       : "";
 
+  const niceReason =
+    typeof formatReason === "function"
+      ? formatReason(item.reason)
+      : (item.reason || "This video has no transcript/captions available on YouTube.");
+
   const reasonHtml =
     status !== "summarized"
       ? `
         <div style="margin-top:10px;color:#444;font-size:13px;line-height:1.45;">
-          <span style="font-weight:800;">Reason:</span> ${escapeHtml(
-            item.reason || "This video has no transcript/captions available on YouTube."
-          )}
+          <span style="font-weight:800;">Reason:</span> ${escapeHtml(niceReason)}
         </div>
       `
       : "";
@@ -241,7 +288,7 @@ function renderCard(item) {
           <tr>
             <td style="padding:0;">
               <a href="${url}" style="text-decoration:none;">
-                <img src="${thumbUrl}" alt="" style="width:100%;max-width:640px;height:auto;display:block;border:0;outline:none;text-decoration:none;background:#EEE;">
+                <img src="${thumbUrl}" alt="" style="width:100%;max-width:640px;height:auto;display:block;border:0;outline:none;text-decoration:none;background:#F6F7FB;">
               </a>
             </td>
           </tr>
@@ -276,6 +323,7 @@ function renderCard(item) {
     </tr>
   `;
 }
+
 
 function youtubeThumb(item) {
   // Prefer explicit thumbnail if you already store it
